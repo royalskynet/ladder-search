@@ -35,7 +35,14 @@ Then check what is available:
 python3 ~/.claude/skills/ladder-search/scripts/ladder.py doctor
 ```
 
-Only Jina is required. It needs no key or install. Every other rung is optional and is skipped when missing. See the Setup section of `SKILL.md`.
+Only Jina is required. It needs no key or install. To install the rest (Exa search, Agent-Reach, web-access):
+
+```bash
+scripts/setup.sh            # check only: lists what is missing and the commands it would run
+scripts/setup.sh --apply    # install, user-level only, no sudo
+```
+
+Agent-Reach's system-level step (`agent-reach install --env=auto --system`) is printed, not run. It installs system dependencies and platform logins, so run it only after you decide to. Details are in the Setup section of `SKILL.md`.
 
 ## Usage
 

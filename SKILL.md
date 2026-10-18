@@ -44,8 +44,17 @@ A URL moves up only when the rung returns `BLOCKED` (401/403/429/503, body under
 
 ## Setup (all optional; missing parts degrade, they don't break)
 
-- Exa search: `npm i -g mcporter && mcporter config add exa --url https://mcp.exa.ai/mcp` (free tier, no key).
+`scripts/setup.sh` checks everything below and prints the exact commands. Run it first and show the user the plan. `scripts/setup.sh --apply` installs. It works at user level only (`npm -g`, `uv tool`/`pipx`, Claude Code plugin/skill dirs) and never uses sudo.
+
+| Part | `--apply` runs |
+|---|---|
+| Exa search | `npm i -g mcporter`; `mcporter config add exa --url https://mcp.exa.ai/mcp` (free tier, no key) |
+| Agent-Reach | `uv tool install` (or `pipx install`) `https://github.com/Panniantong/agent-reach/archive/main.zip`; `agent-reach skill --install` |
+| web-access | `claude plugin marketplace add https://github.com/eze-is/web-access`; `claude plugin install web-access@web-access --scope user` (no `claude` CLI: `git clone` into `~/.claude/skills/web-access`). Needs Node.js 22+ |
+
+Not run automatically, need the user's explicit OK: `agent-reach install --env=auto --system [--channels=...]` (system dependencies, global tools, platform logins), then `agent-reach doctor`. Restart Claude Code afterwards so new skills load, then run `ladder.py doctor`.
+
+Optional rungs, set up by hand:
 - ddgs fallback: `uv` installed (`uvx --from ddgs` runs on demand).
-- camofox: [camofox-browser](https://github.com/jo-inc/camofox-browser) REST service.
-- CDP: [web-access](https://github.com/eze-is/web-access) skill + Chrome with `--remote-debugging-port`. `scripts/wa-chrome` (macOS) runs a separate Chrome on a copy of your profile, so your everyday Chrome keeps working.
-- Platforms: [Agent-Reach](https://github.com/Panniantong/Agent-Reach) skill.
+- camofox: [camofox-browser](https://github.com/jo-inc/camofox-browser). Install it in its own directory, not inside another app's `node_modules`. Run `npx camoufox-js fetch`, then run `server.js` as a service. Set `CAMOFOX_URL` if it is not on `:9377`.
+- CDP on macOS: `scripts/wa-chrome start` runs a separate Chrome on a copy of your profile, so your everyday Chrome keeps working. Point web-access at `~/.web-access/chrome-data` on its first run.
