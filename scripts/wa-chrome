@@ -1,0 +1,59 @@
+#!/bin/zsh
+# wa-chrome (macOS): a separate Chrome for the web-access skill's CDP rung.
+# Chrome 136+ ignores --remote-debugging-port on the default profile dir, so this copies your
+# Default profile (cookies included; same Keychain "Chrome Safe Storage" key decrypts them) into
+# its own data dir and starts Chrome there with a debug port. Your everyday Chrome is untouched.
+# Point web-access at the data dir once: its first-run setup asks for a browser data directory.
+# Usage: wa-chrome [start|sync|stop|status]   start = launch if not running; sync = re-copy login state, restart
+# ponytail: login state is a snapshot from the last sync; sites you log into later need `wa-chrome sync`
+set -eu
+SRC="$HOME/Library/Application Support/Google/Chrome"
+DST="${WA_CHROME_DIR:-$HOME/.web-access/chrome-data}"
+PORT="${WA_CDP_PORT:-9341}"
+
+running() { pgrep -f -- "--user-data-dir=$DST" >/dev/null }
+
+stop() {
+  running || return 0
+  pkill -f -- "--user-data-dir=$DST"
+  for _ in {1..20}; do running || return 0; sleep 0.5; done
+  echo "wa-chrome: could not stop" >&2; return 1
+}
+
+sync() {
+  stop
+  mkdir -p "$DST"
+  cp "$SRC/Local State" "$DST/Local State"
+  rsync -a --delete \
+    --exclude 'Cache' --exclude 'Code Cache' --exclude 'GPUCache' \
+    --exclude 'Service Worker/CacheStorage' --exclude 'Singleton*' \
+    "$SRC/Default/" "$DST/Default/"
+  rm -f "$DST/DevToolsActivePort"
+}
+
+start() {
+  [ -d "$DST/Default" ] || sync
+  if ! running; then
+    rm -f "$DST/DevToolsActivePort"
+    open -g -n -a "Google Chrome" --args \
+      --user-data-dir="$DST" --remote-debugging-port="$PORT" \
+      --no-first-run --no-default-browser-check --restore-last-session=false
+  fi
+  # With an explicit port Chrome skips DevToolsActivePort; web-access reads wsPath from it, so write it from /json/version
+  local ws=""
+  for _ in {1..30}; do
+    ws=$(curl -s --max-time 1 "127.0.0.1:$PORT/json/version" | sed -n 's|.*"webSocketDebuggerUrl": *"ws://[^/]*\(/devtools/browser/[^"]*\)".*|\1|p')
+    [ -n "$ws" ] && break; sleep 0.5
+  done
+  [ -n "$ws" ] || { echo "wa-chrome: port $PORT gave no webSocketDebuggerUrl within 15 s" >&2; return 1; }
+  printf '%s\n%s\n' "$PORT" "$ws" > "$DST/DevToolsActivePort"
+  echo "wa-chrome: up port=$PORT dir=$DST"
+}
+
+case "${1:-start}" in
+  start) start ;;
+  sync) sync; start ;;
+  stop) stop ;;
+  status) running && echo "running port=$PORT" || echo "stopped" ;;
+  *) echo "usage: wa-chrome [start|sync|stop|status]" >&2; exit 2 ;;
+esac

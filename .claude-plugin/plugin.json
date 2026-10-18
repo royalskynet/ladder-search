@@ -1,0 +1,9 @@
+{
+  "name": "ladder-search",
+  "description": "Self-contained web search + page reading for Claude Code: find sources in parallel, read pages through a Jina -> camofox -> logged-in Chrome (CDP) ladder that escalates only when blocked.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "keywords": ["web", "search", "fetch", "jina", "exa", "cdp", "scraping"],
+  "skills": ["./"],
+  "hooks": "./hooks/hooks.json"
+}

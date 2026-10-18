@@ -1,0 +1,14 @@
+{
+  "name": "ladder-search",
+  "owner": { "name": "royalskynet" },
+  "metadata": { "description": "Web search and page-reading ladder for Claude Code" },
+  "plugins": [
+    {
+      "name": "ladder-search",
+      "description": "Find sources, then read pages via Jina -> camofox -> logged-in Chrome, escalating only when blocked",
+      "source": "./",
+      "category": "productivity",
+      "tags": ["web", "search", "fetch", "cdp"]
+    }
+  ]
+}
