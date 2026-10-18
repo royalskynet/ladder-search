@@ -31,9 +31,10 @@ if have mcporter; then ok "mcporter"; else
   miss "mcporter"
   if have npm; then step npm i -g mcporter; else echo "  need Node.js/npm first: https://nodejs.org"; fi
 fi
-if have mcporter && mcporter config list 2>/dev/null | grep -q '\bexa\b'; then ok "exa server"; else
+# capture first: with pipefail, `grep -q` exiting early SIGPIPEs the producer and fails the pipeline
+if have mcporter && grep -qw exa <<<"$(mcporter config list 2>/dev/null)"; then ok "exa server"; else
   miss "exa server in mcporter"
-  step mcporter config add exa --url https://mcp.exa.ai/mcp
+  step mcporter config add exa --url https://mcp.exa.ai/mcp --scope home  # default scope writes ./config
 fi
 
 echo "[2/4] Agent-Reach (platform backends: X, Reddit, YouTube, Bilibili, Xiaohongshu, ...)"
@@ -52,7 +53,7 @@ fi
 echo "[3/4] web-access (CDP into your Chrome; needs Node.js 22+)"
 NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
 [ "$NODE_MAJOR" -ge 22 ] && ok "node $NODE_MAJOR" || miss "node >= 22 (found ${NODE_MAJOR}); install from https://nodejs.org"
-if [ -f "$SKILLS/web-access/SKILL.md" ] || (have claude && claude plugin list 2>/dev/null | grep -q 'web-access'); then
+if [ -f "$SKILLS/web-access/SKILL.md" ] || (have claude && grep -q 'web-access' <<<"$(claude plugin list 2>/dev/null)"); then
   ok "web-access"
 else
   miss "web-access"

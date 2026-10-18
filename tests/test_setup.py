@@ -50,3 +50,14 @@ def test_apply_runs_installers_but_not_system(tmp_path):
     assert "claude plugin install web-access@web-access --scope user" in calls
     assert "--system" not in calls and "sudo" not in calls
     assert "agent-reach install --env=auto --system" in p.stdout  # printed as a next step only
+    assert "+ mcporter config add exa --url https://mcp.exa.ai/mcp --scope home" in p.stdout  # default is ./config
+
+
+def test_detects_exa_when_list_output_is_long(tmp_path):
+    # `list | grep -q` under pipefail failed once grep exited early and SIGPIPEd mcporter
+    env, log = _bare_env(tmp_path)
+    mcp = Path(env["PATH"]) / "mcporter"
+    mcp.write_text('#!/bin/sh\necho exa\ni=0; while [ $i -lt 20000 ]; do echo "  filler line $i"; i=$((i+1)); done\n')
+    mcp.chmod(0o755)
+    p = _run(env)
+    assert "ok   exa server" in p.stdout, p.stdout
