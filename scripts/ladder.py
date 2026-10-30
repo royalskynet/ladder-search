@@ -2,14 +2,15 @@
 """ladder-search: find sources, then read pages, escalating one rung only when the page is blocked.
 
 Usage:
-    ladder.py search "<query>" [--max N]          # Exa (via mcporter) -> ddgs fallback
-    ladder.py read <URL | @urls.txt> ... [--from jina|camofox|cdp] [--max-chars N]
+    ladder.py search "<query>" [--max N]          # Exa (via mcporter) -> TinyFish -> ddgs fallback
+    ladder.py read <URL | @urls.txt> ... [--from jina|tinyfish|camofox|cdp] [--max-chars N]
     ladder.py doctor                              # which rungs are usable right now
 
 Read ladder (each rung tried at most once per URL, never the same rung twice):
     1. jina     https://r.jina.ai/<URL>                      static, cheap, no browser
-    2. camofox  anti-detect Firefox REST (CAMOFOX_URL)        anti-bot, no login
-    3. cdp      web-access cdp-proxy (CDP_PROXY_URL)          your logged-in Chrome
+    2. tinyfish TinyFish Fetch (tinyfish CLI)                remote render, no local browser
+    3. camofox  anti-detect Firefox REST (CAMOFOX_URL)        anti-bot, no login
+    4. cdp      web-access cdp-proxy (CDP_PROXY_URL)          your logged-in Chrome
 A rung is skipped when its service is not reachable. Escalation happens only when the
 previous rung was blocked (401/403/429/503, body < 500 chars, or a captcha/login marker).
 
@@ -20,7 +21,9 @@ Output
 Exit: 0 all ok, 2 some URL failed / no hits, 3 no rung/backend usable, 5 still blocked at top rung.
 
 Env: CAMOFOX_URL (default http://localhost:9377), CDP_PROXY_URL (default http://localhost:3456),
-     JINA_API_KEY (optional, raises Jina rate limit), SSL_CERT_FILE (MITM proxies).
+     JINA_API_KEY (optional, raises Jina rate limit), SSL_CERT_FILE (MITM proxies),
+     TINYFISH_API_KEY (read by the tinyfish CLI; or run `tinyfish auth set`),
+     LADDER_NO_CDP=1 (drop the cdp rung; bots use scripts/ladder-bot, which sets it).
 Only the Python standard library is used.
 """
 from __future__ import annotations
@@ -42,7 +45,8 @@ from concurrent.futures import ThreadPoolExecutor
 JINA = "https://r.jina.ai/"
 CAMOFOX = os.environ.get("CAMOFOX_URL", "http://localhost:9377").rstrip("/")
 CDP = os.environ.get("CDP_PROXY_URL", "http://localhost:3456").rstrip("/")
-RUNGS = ("jina", "camofox", "cdp")
+RUNGS = ("jina", "tinyfish", "camofox", "cdp")
+REMOTE_RUNGS = ("jina", "tinyfish")  # stateless HTTP services: run in parallel
 MAX_CHARS = 20000
 READ_TIMEOUT = 30
 SEARCH_TIMEOUT = 60
@@ -106,6 +110,15 @@ def camofox_up() -> bool:
     return sc == 200 and isinstance(p, dict) and p.get("ok") is True
 
 
+def _tinyfish() -> str | None:
+    return shutil.which("tinyfish") or next(
+        (c for c in ("/opt/homebrew/bin/tinyfish", os.path.expanduser("~/.local/bin/tinyfish")) if os.access(c, os.X_OK)), None)
+
+
+def tinyfish_up() -> bool:
+    return _tinyfish() is not None
+
+
 def cdp_up() -> bool:
     sc, p = http("GET", CDP + "/health", timeout=3)
     return sc == 200 and isinstance(p, dict) and p.get("connected") is True
@@ -136,6 +149,37 @@ def jina(url: str) -> tuple[str, str, str]:
             continue
         lines.append(line)
     return _classify(" ".join(lines), title)
+
+
+def _tinyfish_json(args: list[str]) -> tuple[object, str]:
+    tf = _tinyfish()
+    if tf is None:
+        return None, "tinyfish CLI not found"
+    try:
+        p = subprocess.run([tf, *args], capture_output=True, text=True, timeout=READ_TIMEOUT + 15)
+    except subprocess.TimeoutExpired:
+        return None, "tinyfish timeout"
+    try:
+        return json.loads(p.stdout), ""
+    except ValueError:
+        return None, (p.stderr or p.stdout).strip()[:300]
+
+
+def tinyfish(url: str) -> tuple[str, str, str]:
+    data, err = _tinyfish_json(["fetch", "content", "get", url, "--format", "markdown",
+                                "--per-url-timeout-ms", str(READ_TIMEOUT * 1000)])
+    return parse_tinyfish_fetch(data) if data is not None else ("ERR", "", err)
+
+
+def parse_tinyfish_fetch(data: object) -> tuple[str, str, str]:
+    """{"results":[{title,text}], "errors":[{url,error}]} for one URL -> (status, title, body)."""
+    if not isinstance(data, dict):
+        return "ERR", "", str(data)[:300]
+    res = data.get("results") or []
+    if res and isinstance(res[0], dict):
+        return _classify(str(res[0].get("text") or ""), str(res[0].get("title") or ""))
+    errs = data.get("errors") or [{}]
+    return "ERR", "", str(errs[0].get("error", "no result") if isinstance(errs[0], dict) else errs[0])
 
 
 def camofox(url: str) -> tuple[str, str, str]:
@@ -188,25 +232,28 @@ def _classify(body: str, title: str) -> tuple[str, str, str]:
     return ("200:TRUNCATED" if len(body) > MAX_CHARS else "200"), title, body[:MAX_CHARS]
 
 
-RUNG_FN = {"jina": jina, "camofox": camofox, "cdp": cdp}
-RUNG_UP = {"jina": lambda: True, "camofox": camofox_up, "cdp": cdp_up}
+RUNG_FN = {"jina": jina, "tinyfish": tinyfish, "camofox": camofox, "cdp": cdp}
+RUNG_UP = {"jina": lambda: True, "tinyfish": tinyfish_up, "camofox": camofox_up, "cdp": cdp_up}
 
 
 # ---------- commands ----------
 
 def read(urls: list[str], start: str = "jina") -> int:
     rungs = list(RUNGS[RUNGS.index(start):])
+    if os.environ.get("LADDER_NO_CDP") == "1":  # bots (OpenBot etc.) must never reach the user's logged-in Chrome
+        rungs = [r for r in rungs if r != "cdp"]
     up = {r: RUNG_UP[r]() for r in rungs}
     if not any(up.values()):
         for u in urls:
             print(f"{u}\tERR\t-\t\tno rung reachable (run: ladder.py doctor)")
         return 3
     results: dict[int, tuple[str, str, str, str]] = {}
-    pending = list(range(len(urls)))
+    trail: dict[int, list[str]] = {}  # every rung tried per URL; a failure row shows them all, so a reader
+    pending = list(range(len(urls)))   # never mistakes "last rung" for "only rung" (10-30 OpenBot misreport)
     for rung in rungs:
         if not up[rung] or not pending:
             continue
-        if rung == "jina":
+        if rung in REMOTE_RUNGS:
             with ThreadPoolExecutor(max_workers=JINA_WORKERS) as ex:
                 got = list(ex.map(lambda i: RUNG_FN[rung](urls[i]), pending))
         else:  # browser rungs: serial, spaced per domain, to stay polite and avoid tab storms
@@ -219,6 +266,7 @@ def read(urls: list[str], start: str = "jina") -> int:
                 last[host] = time.monotonic()
         nxt = []
         for i, (status, title, body) in zip(pending, got):
+            trail.setdefault(i, []).append(f"{rung}={status}" + (f" {body[:80]}" if status == "ERR" else ""))
             results[i] = (status, rung, title, body)
             if status.startswith("BLOCKED") or status in ("EMPTY", "ERR"):
                 nxt.append(i)
@@ -226,6 +274,8 @@ def read(urls: list[str], start: str = "jina") -> int:
     rc = 0
     for i, u in enumerate(urls):
         status, rung, title, body = results.get(i, ("ERR", "-", "", "no rung reachable"))
+        if not status.startswith("200") and i in trail:
+            body = "tried " + " > ".join(trail[i]) + (f" | {body}" if body else "")
         print(f"{u}\t{status}\t{rung}\t{title}\t{body}")
         if status.startswith("BLOCKED"):
             rc = max(rc, 5)
@@ -264,9 +314,11 @@ def _exa(query: str, n: int) -> list[tuple[str, str]] | None:
         if not limited or wait is None:
             break
         time.sleep(wait)
-    if p.returncode != 0 and not p.stdout.strip():
+    hits = parse_exa(p.stdout, n)
+    if not hits:
+        # rate-limit/error text has no Title:/URL: lines either; cascade to TinyFish
         return None
-    return parse_exa(p.stdout, n)
+    return hits
 
 
 def parse_exa(text: str, n: int) -> list[tuple[str, str]]:
@@ -284,6 +336,21 @@ def parse_exa(text: str, n: int) -> list[tuple[str, str]]:
         if len(hits) >= n:
             break
     return hits
+
+
+def _tinyfish_search(query: str, n: int) -> list[tuple[str, str]] | None:
+    if _tinyfish() is None:
+        return None
+    data, _ = _tinyfish_json(["search", "query", query])
+    return parse_tinyfish_search(data, n)
+
+
+def parse_tinyfish_search(data: object, n: int) -> list[tuple[str, str]] | None:
+    if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+        return None
+    hits = [(str(r.get("title", "")), r["url"]) for r in data["results"]
+            if isinstance(r, dict) and str(r.get("url", "")).startswith("http")]
+    return hits[:n]
 
 
 def _ddgs(query: str, n: int) -> list[tuple[str, str]] | None:
@@ -304,7 +371,10 @@ def _ddgs(query: str, n: int) -> list[tuple[str, str]] | None:
 def search(query: str, n: int) -> int:
     hits = _exa(query, n)
     if hits is None:
-        print("[ladder-search] Exa unavailable (mcporter missing or failed); trying ddgs", file=sys.stderr)
+        print("[ladder-search] Exa unavailable (mcporter missing or failed); trying TinyFish", file=sys.stderr)
+        hits = _tinyfish_search(query, n)
+    if hits is None:
+        print("[ladder-search] TinyFish unavailable (tinyfish CLI missing or failed); trying ddgs", file=sys.stderr)
         hits = _ddgs(query, n)
     if hits is None:
         print("[ladder-search] no search backend; use the host WebSearch tool", file=sys.stderr)
@@ -317,14 +387,16 @@ def search(query: str, n: int) -> int:
 def doctor() -> int:
     rows = [
         ("search:exa", "ok" if _mcporter() else "off", "mcporter on PATH (npm i -g mcporter; mcporter config add exa --url https://mcp.exa.ai/mcp)"),
+        ("search:tinyfish", "ok" if tinyfish_up() else "off", "tinyfish CLI (npm i -g @tiny-fish/cli; tinyfish auth set)"),
         ("search:ddgs", "ok" if (shutil.which("uvx") or os.access(os.path.expanduser("~/.local/bin/uvx"), os.X_OK)) else "off", "uvx on PATH"),
         ("read:jina", "ok", JINA),
+        ("read:tinyfish", "ok" if tinyfish_up() else "off", "tinyfish fetch content get"),
         ("read:camofox", "ok" if camofox_up() else "off", CAMOFOX + "/health"),
         ("read:cdp", "ok" if cdp_up() else "off", CDP + "/health (web-access skill + Chrome with --remote-debugging-port)"),
         ("platforms", "ok" if os.path.isfile(os.path.expanduser("~/.claude/skills/agent-reach/SKILL.md")) else "off", "agent-reach skill"),
     ]
     for name, st, how in rows:
-        print(f"{name:<13} {st:<3}  {how}")
+        print(f"{name:<15} {st:<3}  {how}")
     return 0
 
 

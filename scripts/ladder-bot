@@ -1,0 +1,3 @@
+#!/bin/sh
+# 給 bot 用的入口：永遠不碰使用者已登入的 Chrome（cdp 階）。
+exec env LADDER_NO_CDP=1 python3 "$(dirname "$0")/ladder.py" "$@"

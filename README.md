@@ -6,8 +6,8 @@ Agents tend to call `WebFetch` once and give up when the page is blocked. ladder
 search in parallel, read each page on the cheapest rung that works, and move up one rung only when the page is blocked.
 
 ```
-search   host WebSearch  +  Exa (mcporter)  ->  ddgs fallback
-read     jina (r.jina.ai)  ->  camofox (anti-detect Firefox)  ->  cdp (your logged-in Chrome via web-access)
+search   host WebSearch  +  Exa (mcporter)  ->  TinyFish  ->  ddgs fallback
+read     jina (r.jina.ai)  ->  tinyfish (TinyFish Fetch)  ->  camofox (anti-detect Firefox)  ->  cdp (your logged-in Chrome via web-access)
 platform  X / Reddit / YouTube / Bilibili / Xiaohongshu / Weibo / Xueqiu / GitHub  ->  agent-reach
 interact  login, clicks, forms, or 1-3 failed twice  ->  web-access (CDP)
 ```
@@ -58,6 +58,7 @@ Blocked means: HTTP 401/403/429/503, a body under 500 characters, or a captcha /
 
 - [Jina Reader](https://jina.ai/reader/): URL to Markdown
 - [Exa](https://exa.ai/) via [mcporter](https://github.com/openclaw/mcporter): neural search, free MCP tier
+- [TinyFish](https://tinyfish.ai/) via the `tinyfish` CLI (`npm i -g @tiny-fish/cli`): free search and fetch (rate-limited), needs `TINYFISH_API_KEY`
 - [camofox-browser](https://github.com/jo-inc/camofox-browser): anti-detect Firefox REST service
 - [web-access](https://github.com/eze-is/web-access): CDP proxy into your Chrome
 - [Agent-Reach](https://github.com/Panniantong/Agent-Reach): platform backends (X, Reddit, YouTube, ...)

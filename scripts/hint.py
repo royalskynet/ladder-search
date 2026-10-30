@@ -25,7 +25,7 @@ LADDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ladder.py")
 RULE = (
     "[ladder-search] Web lookup detected. Do not rely on a single WebFetch. "
     f"1) Find sources: host WebSearch + `python3 {LADDER} search \"<q>\"` in parallel. "
-    "2) Read known URLs: `ladder.py read <url>...` (Jina first, auto-escalates to camofox, then your logged-in "
+    "2) Read known URLs: `ladder.py read <url>...` (Jina first, auto-escalates to TinyFish, camofox, then your logged-in "
     "Chrome via web-access CDP, only when blocked). Use WebFetch only to extract a specific field; raw HTML / JSON-LD via curl. "
     "3) Named platforms (X/Reddit/YouTube transcripts/Bilibili/Xiaohongshu/Weibo/Xueqiu/GitHub): use the agent-reach skill. "
     f"4) Login state, dynamic rendering, anti-bot, clicking, or steps 1-3 failed twice on one target: use the web-access skill "

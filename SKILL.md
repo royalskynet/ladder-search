@@ -1,6 +1,6 @@
 ---
 name: ladder-search
-description: Web search and page reading with an escalation ladder. Use whenever the task needs information from the web - searching for sources, reading a URL, checking a platform (X, Reddit, YouTube, GitHub, Xiaohongshu, Bilibili), or a page that WebFetch could not read (blocked, login wall, JavaScript-rendered). Finds sources in parallel, then reads pages via Jina -> camofox -> logged-in Chrome (CDP), moving up one rung only when blocked.
+description: Web search and page reading with an escalation ladder. Use whenever the task needs information from the web - searching for sources, reading a URL, checking a platform (X, Reddit, YouTube, GitHub, Xiaohongshu, Bilibili), or a page that WebFetch could not read (blocked, login wall, JavaScript-rendered). Finds sources in parallel, then reads pages via Jina -> TinyFish -> camofox -> logged-in Chrome (CDP), moving up one rung only when blocked.
 metadata:
   version: 0.1.0
 ---
@@ -12,7 +12,7 @@ Four layers. Use them together, not WebFetch alone. Never retry the same method 
 | Need | Use |
 |---|---|
 | ① Find sources | Host `WebSearch` **and** `ladder.py search "<q>"` (Exa) in the same turn |
-| ② Read a known URL | `ladder.py read <url>...` (Jina → camofox → CDP, auto-escalating). `WebFetch` only to pull one specific field. Raw HTML / JSON-LD: `curl -s` |
+| ② Read a known URL | `ladder.py read <url>...` (Jina → TinyFish → camofox → CDP, auto-escalating). `WebFetch` only to pull one specific field. Raw HTML / JSON-LD: `curl -s` |
 | ③ Named platform (X, Reddit, YouTube transcripts, Bilibili, Xiaohongshu, GitHub, Xueqiu) | `agent-reach` skill, its backend for that platform |
 | ④ Login state, clicking, forms, infinite scroll, or ①–③ failed twice on the same target | `web-access` skill (CDP into your Chrome). Chrome not running: `scripts/wa-chrome start`; a site you logged into after the last sync: `scripts/wa-chrome sync` |
 
@@ -21,7 +21,7 @@ Four layers. Use them together, not WebFetch alone. Never retry the same method 
 ```bash
 S="${CLAUDE_SKILL_DIR}/scripts/ladder.py"
 python3 "$S" doctor                         # which rungs are usable now
-python3 "$S" search "query" --max 5         # TITLE<TAB>URL per hit; Exa via mcporter, ddgs fallback
+python3 "$S" search "query" --max 5         # TITLE<TAB>URL per hit; Exa via mcporter, then TinyFish, then ddgs
 python3 "$S" read URL1 URL2 @urls.txt       # URL<TAB>STATUS<TAB>RUNG<TAB>TITLE<TAB>BODY
 python3 "$S" read URL --from cdp            # known login wall: start at the logged-in Chrome rung
 ```
@@ -31,14 +31,16 @@ Exit codes: `0` ok · `2` some URL failed or no hits · `3` no backend reachable
 ## Read ladder
 
 1. **jina**: `r.jina.ai/<url>`. Static, cheap, returns Markdown. Up to 4 URLs in parallel.
-2. **camofox**: anti-detect Firefox REST service (`CAMOFOX_URL`, default `localhost:9377`). Handles bot walls. Has no login.
-3. **cdp**: background tab in the Chrome that `web-access` controls (`CDP_PROXY_URL`, default `localhost:3456`). Uses your login state. Waits up to 10 s for dynamic content, then closes the tab.
+2. **tinyfish**: TinyFish Fetch through the `tinyfish` CLI. Renders remotely, no local browser. Parallel like jina. Free (150 URLs/min, 1,000/day); hitting the cap returns ERR and the URL moves up.
+3. **camofox**: anti-detect Firefox REST service (`CAMOFOX_URL`, default `localhost:9377`). Handles bot walls. Has no login.
+4. **cdp**: background tab in the Chrome that `web-access` controls (`CDP_PROXY_URL`, default `localhost:3456`). Uses your login state. Waits up to 10 s for dynamic content, then closes the tab.
 
 A URL moves up only when the rung returns `BLOCKED` (401/403/429/503, body under 500 chars, or a captcha / login / cookie-wall marker), `EMPTY`, or `ERR`. Unreachable rungs are skipped. Browser rungs run serially with ≥3 s between hits on one domain.
 
 ## Rules
 
 - A page blocked at every rung is a finding: say "could not read X (BLOCKED:marker)" and cite another source. Do not claim the content.
+- A failed row's rung column is only the last rung tried; its body starts `tried jina=… > tinyfish=… > camofox=…`, listing every rung and its result. Report from that trail; do not guess which rungs ran or why.
 - `search` with zero hits does not mean no data exists. Rephrase once, or use the other search lane.
 - The CDP rung acts as you. Use it to read pages. Posting, buying, or changing account settings goes through `web-access` with explicit user approval.
 
@@ -55,6 +57,7 @@ A URL moves up only when the rung returns `BLOCKED` (401/403/429/503, body under
 Not run automatically, need the user's explicit OK: `agent-reach install --env=auto --system [--channels=...]` (system dependencies, global tools, platform logins), then `agent-reach doctor`. Restart Claude Code afterwards so new skills load, then run `ladder.py doctor`.
 
 Optional rungs, set up by hand:
+- TinyFish (search lane 2, read rung 2): `npm i -g @tiny-fish/cli`, then `TINYFISH_API_KEY` in the environment or `tinyfish auth set`. Search and Fetch are free (30 req/min, 500/hour; 150 URLs/min, 1,000/day). Agent, Browser, Monitor and Research draw on the Wallet; ladder-search never calls them. Skipped when the CLI is missing.
 - ddgs fallback: `uv` installed (`uvx --from ddgs` runs on demand).
 - camofox: [camofox-browser](https://github.com/jo-inc/camofox-browser). Install it in its own directory, not inside another app's `node_modules`. Run `npx camoufox-js fetch`, then run `server.js` as a service. Set `CAMOFOX_URL` if it is not on `:9377`.
 - CDP on macOS: `scripts/wa-chrome start` runs a separate Chrome on a copy of your profile, so your everyday Chrome keeps working. Point web-access at `~/.web-access/chrome-data` on its first run.
