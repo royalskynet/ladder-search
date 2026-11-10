@@ -7,7 +7,7 @@ search in parallel, read each page on the cheapest rung that works, and move up 
 
 ```
 search   host WebSearch  +  Exa (mcporter)  ->  TinyFish  ->  ddgs fallback
-read     jina (r.jina.ai)  ->  tinyfish (TinyFish Fetch)  ->  camofox (anti-detect Firefox)  ->  cdp (your logged-in Chrome via web-access)
+read     tinyfish (TinyFish Fetch, free)  ->  jina (r.jina.ai)  ->  camofox (anti-detect Firefox)  ->  cdp (your logged-in Chrome via web-access)
 platform  X / Reddit / YouTube / Bilibili / Xiaohongshu / Weibo / Xueqiu / GitHub  ->  agent-reach
 interact  login, clicks, forms, or 1-3 failed twice  ->  web-access (CDP)
 ```
@@ -35,7 +35,7 @@ Then check what is available:
 python3 ~/.claude/skills/ladder-search/scripts/ladder.py doctor
 ```
 
-Only Jina is required. It needs no key or install. To install the rest (Exa search, Agent-Reach, web-access):
+Only Jina is always usable. It needs no key or install. To install the rest (TinyFish Fetch, Exa search, Agent-Reach, web-access):
 
 ```bash
 scripts/setup.sh            # check only: lists what is missing and the commands it would run

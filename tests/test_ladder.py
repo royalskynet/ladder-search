@@ -14,7 +14,7 @@ import ladder  # noqa: E402
 GOOD = "x" * 600
 
 
-def _run(fns, up, urls, start="jina"):
+def _run(fns, up, urls, start=ladder.RUNGS[0]):
     calls = []
     up = {**{r: False for r in ladder.RUNGS}, **up}  # rungs a test does not name are down, never called for real
 
@@ -73,7 +73,7 @@ def test_still_blocked_at_top_is_exit_5_and_order_kept():
 def test_err_trail_keeps_the_error_text():
     fns = {"jina": lambda u: ("ERR", "", "HTTP 451"), "tinyfish": lambda u: ("ERR", "", "rate_limited")}
     rc, rows, _ = _run(fns, {"jina": True, "tinyfish": True}, ["https://a.test/"])
-    assert rc == 2 and rows[0][4].startswith("tried jina=ERR HTTP 451 > tinyfish=ERR rate_limited"), rows[0][4]
+    assert rc == 2 and rows[0][4].startswith("tried tinyfish=ERR rate_limited > jina=ERR HTTP 451"), rows[0][4]
 
 
 def test_from_cdp_skips_lower_rungs():
@@ -98,12 +98,20 @@ def test_hint_fires_on_web_task_only():
     assert _hint("把這個函式改名") == ""
 
 
-def test_tinyfish_rung_sits_between_jina_and_camofox():
-    fns = {"jina": lambda u: ("BLOCKED:short", "", ""), "tinyfish": lambda u: ("200", "t", GOOD),
+def test_tinyfish_rung_is_first_then_jina():
+    fns = {"tinyfish": lambda u: ("BLOCKED:short", "", ""), "jina": lambda u: ("200", "t", GOOD),
            "camofox": lambda u: 1 / 0, "cdp": lambda u: 1 / 0}
     rc, rows, calls = _run(fns, {"jina": True, "tinyfish": True, "camofox": True, "cdp": True}, ["https://a.test/"])
-    assert rc == 0 and rows[0][1:3] == ["200", "tinyfish"]
-    assert [c[0] for c in calls] == ["jina", "tinyfish"]
+    assert rc == 0 and rows[0][1:3] == ["200", "jina"]
+    assert [c[0] for c in calls] == ["tinyfish", "jina"]
+
+
+def test_tinyfish_unavailable_starts_at_jina():
+    fns = {"tinyfish": lambda u: 1 / 0, "jina": lambda u: ("200", "t", GOOD), "camofox": lambda u: 1 / 0,
+           "cdp": lambda u: 1 / 0}
+    rc, rows, calls = _run(fns, {"tinyfish": False, "jina": True, "camofox": True, "cdp": True}, ["https://a.test/"])
+    assert rc == 0 and rows[0][1:3] == ["200", "jina"]
+    assert calls == [("jina", "https://a.test/")]
 
 
 def test_parse_tinyfish_fetch():

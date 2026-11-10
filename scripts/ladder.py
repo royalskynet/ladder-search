@@ -3,12 +3,12 @@
 
 Usage:
     ladder.py search "<query>" [--max N]          # Exa (via mcporter) -> TinyFish -> ddgs fallback
-    ladder.py read <URL | @urls.txt> ... [--from jina|tinyfish|camofox|cdp] [--max-chars N]
+    ladder.py read <URL | @urls.txt> ... [--from tinyfish|jina|camofox|cdp] [--max-chars N]
     ladder.py doctor                              # which rungs are usable right now
 
 Read ladder (each rung tried at most once per URL, never the same rung twice):
-    1. jina     https://r.jina.ai/<URL>                      static, cheap, no browser
-    2. tinyfish TinyFish Fetch (tinyfish CLI)                remote render, no local browser
+    1. tinyfish TinyFish Fetch (tinyfish CLI, free)          remote render, no local browser, 1,000 URLs/day
+    2. jina     https://r.jina.ai/<URL>                      static, cheap, no browser
     3. camofox  anti-detect Firefox REST (CAMOFOX_URL)        anti-bot, no login
     4. cdp      web-access cdp-proxy (CDP_PROXY_URL)          your logged-in Chrome
 A rung is skipped when its service is not reachable. Escalation happens only when the
@@ -45,7 +45,7 @@ from concurrent.futures import ThreadPoolExecutor
 JINA = "https://r.jina.ai/"
 CAMOFOX = os.environ.get("CAMOFOX_URL", "http://localhost:9377").rstrip("/")
 CDP = os.environ.get("CDP_PROXY_URL", "http://localhost:3456").rstrip("/")
-RUNGS = ("jina", "tinyfish", "camofox", "cdp")
+RUNGS = ("tinyfish", "jina", "camofox", "cdp")
 REMOTE_RUNGS = ("jina", "tinyfish")  # stateless HTTP services: run in parallel
 MAX_CHARS = 20000
 READ_TIMEOUT = 30
@@ -238,7 +238,7 @@ RUNG_UP = {"jina": lambda: True, "tinyfish": tinyfish_up, "camofox": camofox_up,
 
 # ---------- commands ----------
 
-def read(urls: list[str], start: str = "jina") -> int:
+def read(urls: list[str], start: str = RUNGS[0]) -> int:
     rungs = list(RUNGS[RUNGS.index(start):])
     if os.environ.get("LADDER_NO_CDP") == "1":  # bots (OpenBot etc.) must never reach the user's logged-in Chrome
         rungs = [r for r in rungs if r != "cdp"]
@@ -419,7 +419,7 @@ def main(argv: list[str]) -> int:
         return search(" ".join(rest), n)
     if cmd == "read":
         global MAX_CHARS
-        start = "jina"
+        start = RUNGS[0]
         urls: list[str] = []
         it = iter(rest)
         for a in it:
