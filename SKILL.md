@@ -12,7 +12,7 @@ Four layers. Use them together, not WebFetch alone. Never retry the same method 
 | Need | Use |
 |---|---|
 | ① Find sources | Host `WebSearch` **and** `ladder.py search "<q>"` (Exa) in the same turn |
-| ② Read a known URL | `ladder.py read <url>...` (TinyFish → Jina → camofox → CDP, auto-escalating). `WebFetch` only to pull one specific field. Raw HTML / JSON-LD: `curl -s` |
+| ② Read a known URL | `ladder.py read <url>...` (TinyFish → Jina → camofox → CDP, auto-escalating). Inside a budgeted research run use the research skill's `scripts/ladder_reach.py read` instead — same ladder, but it also spends/refunds the budget ledger. `WebFetch` only to pull one specific field. Raw HTML / JSON-LD: `curl -s` |
 | ③ Named platform (X, Reddit, YouTube transcripts, Bilibili, Xiaohongshu, GitHub, Xueqiu) | `agent-reach` skill, its backend for that platform |
 | ④ Login state, clicking, forms, infinite scroll, or ①–③ failed twice on the same target | `web-access` skill (CDP into your Chrome). Chrome not running: `scripts/wa-chrome start`; a site you logged into after the last sync: `scripts/wa-chrome sync` |
 
