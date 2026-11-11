@@ -222,6 +222,63 @@ def cdp(url: str) -> tuple[str, str, str]:
         http("GET", f"{CDP}/close?target={tid}")
 
 
+def campaign_read(url: str, start: str = "jina") -> tuple[str, str, str, str]:
+    """Like read(urls) for one URL, but returns (status, rung, title, body) in research reach.py's
+    STATUS<TITLE<BODY shape for the whole ladder (BLOCKED at every rung keeps the top rung's body).
+    Used by the research skill's campaign wrapper; standalone `read` keeps its own output."""
+    for rung in RUNGS[RUNGS.index(start):]:
+        if not RUNG_UP[rung]():
+            continue
+        status, title, body = RUNG_FN[rung](url)
+        if status.startswith("BLOCKED"):
+            last = (status, rung, title, body)
+            continue
+        if status in ("EMPTY", "ERR"):
+            continue
+        return (status, rung, title, body)
+    if "last" in locals():
+        return last
+    return ("ERR", "-", "", "no rung reachable")
+
+
+def campaign_read_many(urls: list[str], start: str = "jina") -> list[tuple[str, str, str, str]]:
+    """campaign_read over many URLs with read()'s politeness: jina parallel, browser rungs serial
+    with ≥SAME_DOMAIN_GAP between hits on one domain."""
+    res: dict[int, tuple[str, str, str, str]] = {}
+
+    pending = list(range(len(urls)))
+    for rung in RUNGS[RUNGS.index(start):]:
+        if not pending or not RUNG_UP[rung]():
+            continue
+        if rung == "jina":
+            with ThreadPoolExecutor(max_workers=JINA_WORKERS) as ex:
+                got = list(ex.map(lambda i: RUNG_FN[rung](urls[i]), pending))
+            for i, r in zip(pending, got):
+                res[i] = (r[0], rung, r[1], r[2])
+        else:  # browser rungs: serial, spaced per domain, to stay polite and avoid tab storms
+            last: dict[str, float] = {}
+            for i in pending:
+                host = urllib.parse.urlsplit(urls[i]).netloc
+                if host in last:
+                    time.sleep(max(0.0, SAME_DOMAIN_GAP - (time.monotonic() - last[host])))
+                r = RUNG_FN[rung](urls[i])
+                last[host] = time.monotonic()
+                res[i] = (r[0], rung, r[1], r[2])
+        keep: list[int] = []
+        for i in pending:
+            status = res[i][0]
+            if status.startswith("BLOCKED"):
+                keep.append(i)
+        pending = keep
+    out = []
+    for i, u in enumerate(urls):
+        if i in res:
+            out.append(res[i])
+        else:
+            out.append(("ERR", "-", "", "no rung reachable"))
+    return out
+
+
 def _classify(body: str, title: str) -> tuple[str, str, str]:
     body = body.replace("\r", " ").replace("\t", " ").replace("\n", " ").strip()
     reason = block_reason(200, body)
@@ -384,6 +441,29 @@ def search(query: str, n: int) -> int:
     return 0 if hits else 2
 
 
+def _agent_reach_skill() -> str | None:
+    """Return the first agent-reach SKILL.md found, or None.
+
+    Checked locations cover Claude Code, the AGENTS.md standard, OpenCode and
+    an explicit override, because the skill is installed once per host.
+    """
+    env = os.environ.get("AGENT_REACH_SKILL")
+    roots = [
+        env,
+        "~/.agents/skills/agent-reach/SKILL.md",
+        "~/.claude/skills/agent-reach/SKILL.md",
+        "~/.config/opencode/skills/agent-reach/SKILL.md",
+        "~/.config/opencode/skill/agent-reach/SKILL.md",
+    ]
+    for p in roots:
+        if not p:
+            continue
+        full = os.path.expanduser(p)
+        if os.path.isfile(full):
+            return full
+    return None
+
+
 def doctor() -> int:
     rows = [
         ("search:exa", "ok" if _mcporter() else "off", "mcporter on PATH (npm i -g mcporter; mcporter config add exa --url https://mcp.exa.ai/mcp)"),
@@ -393,7 +473,7 @@ def doctor() -> int:
         ("read:tinyfish", "ok" if tinyfish_up() else "off", "tinyfish fetch content get"),
         ("read:camofox", "ok" if camofox_up() else "off", CAMOFOX + "/health"),
         ("read:cdp", "ok" if cdp_up() else "off", CDP + "/health (web-access skill + Chrome with --remote-debugging-port)"),
-        ("platforms", "ok" if os.path.isfile(os.path.expanduser("~/.claude/skills/agent-reach/SKILL.md")) else "off", "agent-reach skill"),
+        ("platforms", "ok" if _agent_reach_skill() else "off", "agent-reach skill"),
     ]
     for name, st, how in rows:
         print(f"{name:<15} {st:<3}  {how}")
