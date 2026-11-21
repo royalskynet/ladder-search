@@ -29,6 +29,7 @@ Only the Python standard library is used.
 from __future__ import annotations
 
 import glob
+import html as htmllib
 import json
 import os
 import re
@@ -65,15 +66,88 @@ _JINA_HEADERS = ("Title:", "URL Source:", "Published Time:", "Warning:", "Markdo
 _READ_JS = "({title: document.title, body: document.body ? document.body.innerText : ''})"
 
 
+SHORT_BODY = 500  # below this a wall is likely; only a block if it also looks like one
+
+
+def _looks_like_wall(text: str) -> bool:
+    """Tiny page that is markup-only or word-salad = a JS/login shell, not content.
+
+    A readable sentence is the signal, not a long token: short CJK pages carry no
+    long Latin run, and requiring one turned ordinary brief pages into blocks.
+    """
+    low = text.lower()
+    if "<html" in low or "<script" in low or "<noscript" in low:
+        return True
+    words = re.findall(r"[A-Za-z0-9_]+", low)
+    cjk = len(re.findall(r"[一-鿿]", low))
+    if cjk >= 8:  # enough CJK to be a sentence
+        return False
+    return len(words) < 5  # fewer than ~5 words = not a document
+
+
 def block_reason(status: int, body: str) -> str | None:
-    """Blocked page? Order is fixed: status code -> short body -> wall marker."""
+    """Blocked page? Order is fixed: status code -> wall marker -> suspiciously short.
+
+    A short body alone is NOT a block. Legitimately small pages exist (search result
+    pages, redirect stubs, bare JSON). Treating length as the trigger sent the ladder
+    up a rung for every such URL and reported a false gap at the top rung. Length now
+    only counts when the text cannot be a document at all, or also carries a marker.
+    """
     if status in BLOCKED_STATUSES:
         return "status"
-    if len(body) < 500:
-        return "short"
     if BLOCKED_MARKER_RE.search(body[:3000]):
         return "marker"
+    stripped = body.strip()
+    if len(stripped) < 40:
+        return "short"
+    if len(stripped) < SHORT_BODY and _looks_like_wall(stripped):
+        return "short"
     return None
+
+
+def _looks_like_html(text: str) -> bool:
+    return bool(re.search(r"<\s*!?doctype|<\s*html|<\s*body", text[:2000], re.IGNORECASE))
+
+
+def _html_title(markup: str) -> str:
+    m = re.search(r"<title[^>]*>(.*?)</title>", markup, re.IGNORECASE | re.DOTALL)
+    return htmllib.unescape(m.group(1)).strip() if m else ""
+
+
+def _html_to_text(markup: str) -> str:
+    """Standard-library HTML -> readable text. Drops script/style, keeps block breaks."""
+    try:
+        from html.parser import HTMLParser
+
+        class _T(HTMLParser):
+            def __init__(self) -> None:
+                super().__init__(convert_charrefs=True)
+                self.chunks: list = []
+                self.skip = 0
+
+            def handle_starttag(self, tag, attrs):
+                if tag in ("script", "style", "noscript", "template", "svg"):
+                    self.skip += 1
+                elif tag in ("p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "section", "article"):
+                    self.chunks.append("\n")
+
+            def handle_endtag(self, tag):
+                if tag in ("script", "style", "noscript", "template", "svg") and self.skip:
+                    self.skip -= 1
+
+            def handle_data(self, data):
+                if not self.skip:
+                    self.chunks.append(data)
+
+        parser = _T()
+        parser.feed(markup)
+        parser.close()
+        text = "".join(parser.chunks)
+    except Exception:  # noqa: BLE001 - never fail a read because of parsing
+        text = re.sub(r"<[^>]+>", " ", markup)
+        text = htmllib.unescape(text)
+    text = re.sub(r"[ \t\r\f\v]+", " ", text)
+    return re.sub(r"\n\s*\n\s*\n+", "\n\n", text).strip()
 
 
 def _ssl_context() -> ssl.SSLContext | None:
@@ -86,6 +160,19 @@ def _ssl_context() -> ssl.SSLContext | None:
         return None
 
 
+class HTTPFail(dict):
+    """Returned by http() on a connection-level failure.
+
+    Subclasses dict so every rung can keep treating a parsed payload as a mapping
+    (`payload.get(...)`) without an isinstance guard. Returning a plain string here
+    made the browser rungs raise AttributeError instead of reporting ERR, which
+    aborted the whole read instead of letting the ladder move on.
+    """
+
+    def __init__(self, msg: str) -> None:
+        super().__init__(error=msg)
+
+
 def http(method: str, url: str, body: bytes | None = None, timeout: float = 60,
          headers: dict | None = None) -> tuple[int, object]:
     req = urllib.request.Request(url, data=body, method=method, headers=headers or {})
@@ -96,7 +183,7 @@ def http(method: str, url: str, body: bytes | None = None, timeout: float = 60,
     except urllib.error.HTTPError as exc:
         raw, status = exc.read().decode("utf-8", "replace"), exc.code
     except Exception as exc:  # noqa: BLE001 - connection-level failure
-        return 0, f"{type(exc).__name__}: {str(exc)[:300]}"
+        return 0, HTTPFail(f"{type(exc).__name__}: {str(exc)[:300]}")
     try:
         return status, json.loads(raw)
     except ValueError:
@@ -106,8 +193,15 @@ def http(method: str, url: str, body: bytes | None = None, timeout: float = 60,
 # ---------- rung availability ----------
 
 def camofox_up() -> bool:
+    """Reachable AND able to drive a browser.
+
+    The service answers /health with ok:true even when no Firefox binary is
+    installed (browserConnected:false). Counting that as usable printed `ok` in
+    doctor and spent a round trip on a rung that could only fail.
+    """
     sc, p = http("GET", CAMOFOX + "/health", timeout=3)
-    return sc == 200 and isinstance(p, dict) and p.get("ok") is True
+    return (sc == 200 and isinstance(p, dict) and p.get("ok") is True
+            and p.get("browserConnected") is not False)
 
 
 def _tinyfish() -> str | None:
@@ -138,6 +232,10 @@ def jina(url: str) -> tuple[str, str, str]:
         return "BLOCKED:status", "", ""
     if sc != 200:
         return str(sc), "", ""
+    # Jina does not always honour the Markdown conversion: for some pages it returns
+    # the raw HTML under "Markdown Content:". Streaming tags into the model wastes the
+    # budget, so reduce to readable text and recover the title from <title>.
+    body_is_html = _looks_like_html(text if isinstance(text, str) else "")
     text = text if isinstance(text, str) else json.dumps(text, ensure_ascii=False)
     title, lines = "", []
     for line in text.splitlines():
@@ -148,7 +246,12 @@ def jina(url: str) -> tuple[str, str, str]:
         if not lines and (not s or s.startswith(_JINA_HEADERS)):
             continue
         lines.append(line)
-    return _classify(" ".join(lines), title)
+    body = " ".join(lines)
+    if _looks_like_html(body):
+        if not title:
+            title = _html_title(body)
+        body = _html_to_text(body)
+    return _classify(body, title)
 
 
 def _tinyfish_json(args: list[str]) -> tuple[object, str]:

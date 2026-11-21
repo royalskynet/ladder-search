@@ -137,3 +137,51 @@ def test_no_cdp_env_never_touches_logged_in_chrome():
                                {"jina": True, "cdp": True}, ["https://a.example/1"])
     assert ("cdp", "https://a.example/1") not in calls, calls
     assert rc != 0
+
+
+def test_short_page_is_not_a_block():
+    """Length alone must not trigger a rung climb or a false gap at the top rung."""
+    # A legitimately small page: one sentence, no markup, no wall marker.
+    small = "Release 3.50.0 shipped on 2025-05-29 with a new lock timeout interface."
+    assert ladder.block_reason(200, small) is None
+    # A JS/login shell of the same size still counts as blocked.
+    assert ladder.block_reason(200, "<html><script>challenge()</script></html>") == "short"
+    assert ladder.block_reason(200, "x") == "short"
+    assert ladder.block_reason(200, "Just a moment...") == "marker"
+    assert ladder.block_reason(403, GOOD) == "status"
+    # End to end: a small page stops at the first rung instead of climbing.
+    rc, rows, calls = _run({"jina": lambda u: ("200", "ok", small), "camofox": lambda u: ("200", "", GOOD)},
+                           {"jina": True, "camofox": True}, ["https://a.example/p"])
+    assert rc == 0 and calls == [("jina", "https://a.example/p")], (rc, calls)
+
+
+def test_connection_failure_is_err_not_a_crash():
+    """http() returns a string on a connection-level error; rungs must not raise on it."""
+    failed = ladder.HTTPFail("URLError: connection refused")
+    assert isinstance(failed, dict) and failed.get("error", "").startswith("URLError")
+    with mock.patch.object(ladder, "http", return_value=(0, failed)):
+        assert ladder.camofox("https://a.example/")[0] == "ERR"
+        assert ladder.cdp("https://a.example/")[0] == "ERR"
+
+
+def test_jina_html_is_reduced_to_text():
+    """Jina sometimes returns raw HTML under 'Markdown Content:'."""
+    page = ("Title: \n\nURL Source: https://a.example/\n\nMarkdown Content:\n"
+            "<!DOCTYPE html><html><head><title>Real Title</title><style>b{}</style></head>"
+            "<body><div>Hello world, this is the actual sentence of the page.</div>"
+            "<script>var x=1</script></body></html>")
+    body = page
+    with mock.patch.object(ladder, "http", return_value=(200, body)):
+        status, title, text = ladder.jina("https://a.example/")
+    assert status.startswith("200"), status
+    assert title == "Real Title", title
+    assert "<div" not in text and "var x=1" not in text, text[:200]
+    assert "Hello world" in text
+
+
+def test_camofox_without_a_browser_is_reported_down():
+    """ok:true with browserConnected:false means the rung cannot work."""
+    with mock.patch.object(ladder, "http", return_value=(200, {"ok": True, "browserConnected": False})):
+        assert ladder.camofox_up() is False
+    with mock.patch.object(ladder, "http", return_value=(200, {"ok": True, "browserConnected": True})):
+        assert ladder.camofox_up() is True
