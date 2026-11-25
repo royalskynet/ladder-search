@@ -2,7 +2,7 @@
 """UserPromptSubmit hook: when the prompt is a web lookup, inject the ladder-search rule.
 
 A skill description alone leaves the choice to the model, which often falls back to a
-single WebFetch. This hook makes the rule appear on every matching turn instead.
+single host fetch call. This hook makes the rule appear on every matching turn instead.
 Reads the hook JSON on stdin; prints nothing (no-op) when the prompt is not a web task.
 """
 from __future__ import annotations
@@ -23,10 +23,10 @@ TRIGGER = re.compile(
 WA_CHROME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wa-chrome")
 LADDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ladder.py")
 RULE = (
-    "[ladder-search] Web lookup detected. Do not rely on a single WebFetch. "
-    f"1) Find sources: host WebSearch + `python3 {LADDER} search \"<q>\"` in parallel. "
+    "[ladder-search] Web lookup detected. Do not rely on a single host fetch call. "
+    f"1) Find sources: the host search tool + `python3 {LADDER} search \"<q>\"` in parallel. "
     "2) Read known URLs: `ladder.py read <url>...` (TinyFish first (free Search/Fetch only), then Jina, camofox, then your logged-in "
-    "Chrome via web-access CDP, only when blocked). Use WebFetch only to extract a specific field; raw HTML / JSON-LD via curl. "
+    "Chrome via web-access CDP, only when blocked). Use the host fetch tool only to extract a specific field; raw HTML / JSON-LD via curl. "
     "3) Named platforms (X/Reddit/YouTube transcripts/Bilibili/Xiaohongshu/Weibo/Xueqiu/GitHub): use the agent-reach skill. "
     f"4) Login state, dynamic rendering, anti-bot, clicking, or steps 1-3 failed twice on one target: use the web-access skill "
     f"(if its Chrome is not running: `{WA_CHROME} start`; sites logged into later need `{WA_CHROME} sync`). "

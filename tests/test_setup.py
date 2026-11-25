@@ -61,3 +61,13 @@ def test_detects_exa_when_list_output_is_long(tmp_path):
     mcp.chmod(0o755)
     p = _run(env)
     assert "ok   exa server" in p.stdout, p.stdout
+
+
+def test_web_access_clone_fallback_uses_open_agent_skills_without_claude(tmp_path):
+    env, log = _bare_env(tmp_path)
+    (Path(env["PATH"]) / "claude").unlink()
+    p = _run(env)
+    assert p.returncode == 0, p.stderr
+    assert "would run: git clone https://github.com/eze-is/web-access" in p.stdout
+    assert "/.agents/skills/web-access" in p.stdout
+    assert not log.exists()

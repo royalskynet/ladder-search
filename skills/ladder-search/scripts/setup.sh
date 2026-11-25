@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # setup.sh: install the tools ladder-search routes to. Check-only by default; --apply installs.
 #   setup.sh            list what is missing and the exact commands that would run
-#   setup.sh --apply    run them (user-level only: npm -g, uv/pipx tool, Claude Code plugin/skill dirs)
+#   setup.sh --apply    run them (user-level only: npm -g, uv/pipx tool, agent plugin/skill dirs)
 # Never runs sudo, never runs `agent-reach install --system` (system deps + platform logins need the user's
 # explicit OK, per Agent-Reach's own install guide); those are printed as next steps instead.
 set -uo pipefail
@@ -10,7 +10,8 @@ APPLY=0
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AR_SRC="https://github.com/Panniantong/agent-reach/archive/main.zip"
 WA_REPO="https://github.com/eze-is/web-access"
-SKILLS="$HOME/.claude/skills"
+CLAUDE_SKILLS="$HOME/.claude/skills"
+AGENT_SKILLS="$HOME/.agents/skills"
 TODO=0
 
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -25,6 +26,7 @@ step() {  # step "<label>" <command...>: run with --apply, otherwise print
 }
 ok() { echo "ok   $1"; }
 miss() { echo "miss $1"; }
+have_skill() { [ -f "$CLAUDE_SKILLS/$1/SKILL.md" ] || [ -f "$AGENT_SKILLS/$1/SKILL.md" ]; }
 
 echo "[1/4] Exa search (mcporter)"
 if have mcporter; then ok "mcporter"; else
@@ -44,7 +46,7 @@ if have agent-reach; then ok "agent-reach $(agent-reach --version 2>/dev/null | 
   elif have pipx; then step pipx install "$AR_SRC"
   else echo "  need uv (https://docs.astral.sh/uv/) or pipx first"; fi
 fi
-if [ -f "$SKILLS/agent-reach/SKILL.md" ]; then ok "agent-reach skill"; else
+if have_skill agent-reach; then ok "agent-reach skill"; else
   miss "agent-reach skill"
   # uv/pipx put the binary in ~/.local/bin, which may not be on PATH in this shell yet
   step "$(command -v agent-reach || echo "$HOME/.local/bin/agent-reach")" skill --install
@@ -53,7 +55,7 @@ fi
 echo "[3/4] web-access (CDP into your Chrome; needs Node.js 22+)"
 NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
 [ "$NODE_MAJOR" -ge 22 ] && ok "node $NODE_MAJOR" || miss "node >= 22 (found ${NODE_MAJOR}); install from https://nodejs.org"
-if [ -f "$SKILLS/web-access/SKILL.md" ] || (have claude && grep -q 'web-access' <<<"$(claude plugin list 2>/dev/null)"); then
+if have_skill web-access || (have claude && grep -q 'web-access' <<<"$(claude plugin list 2>/dev/null)"); then
   ok "web-access"
 else
   miss "web-access"
@@ -61,7 +63,11 @@ else
     step claude plugin marketplace add "$WA_REPO"
     step claude plugin install web-access@web-access --scope user
   else
-    step git clone "$WA_REPO" "$SKILLS/web-access"
+    if [ -d "$CLAUDE_SKILLS" ] && [ ! -d "$AGENT_SKILLS" ]; then
+      step git clone "$WA_REPO" "$CLAUDE_SKILLS/web-access"
+    else
+      step git clone "$WA_REPO" "$AGENT_SKILLS/web-access"
+    fi
   fi
 fi
 
@@ -76,7 +82,7 @@ if [ "$APPLY" = 1 ]; then
   echo "Next, with the user's explicit OK only (system deps, global tools, platform logins):"
   echo "  agent-reach install --env=auto --system [--channels=twitter,reddit,bilibili,xiaohongshu,...]"
   echo "  agent-reach doctor"
-  echo "Restart Claude Code so new skills/plugins load, then:"
+  echo "Restart Claude Code or Codex so new skills/plugins load, then:"
   echo "  python3 $HERE/ladder.py doctor"
 elif [ "$TODO" -gt 0 ]; then
   echo "$TODO step(s) pending. Re-run with --apply to install."
