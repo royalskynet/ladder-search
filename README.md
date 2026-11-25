@@ -1,12 +1,12 @@
 # ladder-search
 
-A self-contained Claude Code plugin that routes every web task to the right tool: search lanes, a page-reading ladder, [Agent-Reach](https://github.com/Panniantong/Agent-Reach) for named platforms, and [web-access](https://github.com/eze-is/web-access) for logged-in or interactive browsing. It contains no code from either project. It calls them as dependencies and decides which one handles each request.
+A self-contained Claude Code + Codex plugin that routes every web task to the right tool: search lanes, a page-reading ladder, [Agent-Reach](https://github.com/Panniantong/Agent-Reach) for named platforms, and [web-access](https://github.com/eze-is/web-access) for logged-in or interactive browsing. It contains no code from either project. It calls them as dependencies and decides which one handles each request.
 
-Agents tend to call `WebFetch` once and give up when the page is blocked. ladder-search runs a fixed procedure instead:
+Agents tend to try one host fetch call and give up when the page is blocked. ladder-search runs a fixed procedure instead:
 search in parallel, read each page on the cheapest rung that works, and move up one rung only when the page is blocked.
 
 ```
-search   host WebSearch  +  Exa (mcporter)  ->  TinyFish  ->  ddgs fallback
+search   host search tool  +  Exa (mcporter)  ->  TinyFish  ->  ddgs fallback
 read     tinyfish (TinyFish Fetch, free)  ->  jina (r.jina.ai)  ->  camofox (anti-detect Firefox)  ->  cdp (your logged-in Chrome via web-access)
 platform  X / Reddit / YouTube / Bilibili / Xiaohongshu / Weibo / Xueqiu / GitHub  ->  agent-reach
 interact  login, clicks, forms, or 1-3 failed twice  ->  web-access (CDP)
@@ -16,6 +16,8 @@ Each rung is tried at most once per URL. Unreachable rungs are skipped. A page b
 
 ## Install
 
+### Claude Code
+
 As a plugin (skill + a `UserPromptSubmit` hook that injects the rule on web-lookup prompts):
 
 ```
@@ -23,23 +25,38 @@ As a plugin (skill + a `UserPromptSubmit` hook that injects the rule on web-look
 /plugin install ladder-search@ladder-search
 ```
 
-Skill only (no hook; the model decides from the description when to use it):
+### Codex
+
+The repository is also a portable Agent Plugins package: root `plugin.json` plus the canonical skill in `skills/ladder-search/`.
 
 ```bash
-git clone https://github.com/royalskynet/ladder-search ~/.claude/skills/ladder-search
+codex plugin marketplace add royalskynet/ladder-search
+codex plugin add ladder-search@ladder-search
 ```
 
-Then check what is available:
+Codex reads the existing `.claude-plugin/marketplace.json` as a legacy-compatible marketplace. The bundled `UserPromptSubmit` hook uses the same output contract on Codex, but like every non-managed Codex hook it must be reviewed and trusted in `/hooks` before it runs.
+
+### Skill only
+
+No hook; the model decides from the description when to use it. The repository root keeps `SKILL.md` and `scripts` as compatibility symlinks into `skills/ladder-search/` on POSIX checkouts, while plugin installs do not depend on those symlinks.
 
 ```bash
-python3 ~/.claude/skills/ladder-search/scripts/ladder.py doctor
+git clone https://github.com/royalskynet/ladder-search ~/.agents/skills/ladder-search   # open agent skills / Codex
+git clone https://github.com/royalskynet/ladder-search ~/.claude/skills/ladder-search  # Claude-only setup
+```
+
+Then check what is available from a source checkout or direct skill clone:
+
+```bash
+python3 skills/ladder-search/scripts/ladder.py doctor   # source checkout
+python3 ~/.agents/skills/ladder-search/scripts/ladder.py doctor  # direct clone
 ```
 
 Only Jina is always usable. It needs no key or install. To install the rest (TinyFish Fetch, Exa search, Agent-Reach, web-access):
 
 ```bash
-scripts/setup.sh            # check only: lists what is missing and the commands it would run
-scripts/setup.sh --apply    # install, user-level only, no sudo
+skills/ladder-search/scripts/setup.sh            # check only: lists what is missing and the commands it would run
+skills/ladder-search/scripts/setup.sh --apply    # install, user-level only, no sudo
 ```
 
 Agent-Reach's system-level step (`agent-reach install --env=auto --system`) is printed, not run. It installs system dependencies and platform logins, so run it only after you decide to. Details are in the Setup section of `SKILL.md`.

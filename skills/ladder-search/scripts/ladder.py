@@ -434,7 +434,7 @@ def search(query: str, n: int) -> int:
         print("[ladder-search] TinyFish unavailable (tinyfish CLI missing or failed); trying ddgs", file=sys.stderr)
         hits = _ddgs(query, n)
     if hits is None:
-        print("[ladder-search] no search backend; use the host WebSearch tool", file=sys.stderr)
+        print("[ladder-search] no search backend; use the host search tool", file=sys.stderr)
         return 3
     for t, u in hits:
         print(f"{t}\t{u}")

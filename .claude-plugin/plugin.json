@@ -1,9 +1,23 @@
 {
   "name": "ladder-search",
-  "description": "Self-contained web search + page reading for Claude Code: find sources in parallel, read pages through a TinyFish -> Jina -> camofox -> logged-in Chrome (CDP) ladder that escalates only when blocked.",
-  "version": "0.1.2",
+  "description": "Self-contained web search + page reading for Claude Code and Codex: find sources in parallel, read pages through a TinyFish -> Jina -> camofox -> logged-in Chrome (CDP) ladder that escalates only when blocked.",
+  "version": "0.1.3",
   "license": "MIT",
-  "keywords": ["web", "search", "fetch", "jina", "exa", "cdp", "scraping"],
-  "skills": ["./"],
-  "hooks": "./hooks/hooks.json"
+  "keywords": [
+    "web",
+    "search",
+    "fetch",
+    "jina",
+    "exa",
+    "cdp",
+    "scraping"
+  ],
+  "skills": [
+    "./skills/ladder-search/"
+  ],
+  "hooks": "./hooks/hooks.json",
+  "author": {
+    "name": "royalskynet",
+    "url": "https://github.com/royalskynet"
+  }
 }
