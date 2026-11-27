@@ -137,3 +137,70 @@ def test_no_cdp_env_never_touches_logged_in_chrome():
                                {"jina": True, "cdp": True}, ["https://a.example/1"])
     assert ("cdp", "https://a.example/1") not in calls, calls
     assert rc != 0
+
+
+def test_short_page_is_not_a_block():
+    """Length alone must not trigger a rung climb or a false gap at the top rung."""
+    # A legitimately small page: one sentence, no markup, no wall marker.
+    small = "Release 3.50.0 shipped on 2025-05-29 with a new lock timeout interface."
+    assert ladder.block_reason(200, small) is None
+    # The precise allowances: bare JSON, Unicode-readable text, and readable redirect text.
+    assert ladder.block_reason(200, '{"ok":true}') is None
+    assert ladder.block_reason(200, "這一頁說明版本更新修正了登入逾時與鎖定問題。") is None
+    assert ladder.block_reason(200, "이 페이지는 로그인 시간 초과와 잠금 문제가 수정되었다고 설명합니다.") is None
+    assert ladder.block_reason(200, '<html><body>Redirecting to the release page.</body></html>') is None
+    # A JS/login shell or content-free stub of the same size still counts as blocked.
+    assert ladder.block_reason(200, "<html><script>challenge()</script></html>") == "short"
+    assert ladder.block_reason(200, "<html><head><title>Welcome to the wonderful example site</title></head><body><script>challenge()</script></body></html>") == "short"
+    assert ladder.block_reason(200, '<html><body>Redirecting...</body></html>') == "short"
+    assert ladder.block_reason(200, "x") == "short"
+    assert ladder.block_reason(200, "Just a moment...") == "marker"
+    assert ladder.block_reason(403, GOOD) == "status"
+    # End to end: a small page stops at the first rung instead of climbing.
+    rc, rows, calls = _run({"jina": lambda u: ("200", "ok", small), "camofox": lambda u: ("200", "", GOOD)},
+                           {"jina": True, "camofox": True}, ["https://a.example/p"])
+    assert rc == 0 and calls == [("jina", "https://a.example/p")], (rc, calls)
+
+
+def test_connection_failure_payload_remains_plain_text():
+    """Backwards-compatible contract: connection errors are plain text, not dict reprs."""
+    with mock.patch("urllib.request.urlopen", side_effect=OSError("connection refused")):
+        sc, payload = ladder.http("GET", "http://service.invalid/health", timeout=0.01)
+    assert sc == 0
+    assert isinstance(payload, str)
+    assert payload == "OSError: connection refused"
+
+
+def test_jina_html_is_reduced_to_text():
+    """Jina sometimes returns raw HTML under 'Markdown Content:'."""
+    page = ("Title: \n\nURL Source: https://a.example/\n\nMarkdown Content:\n"
+            "<!DOCTYPE html><html><head><title>Real Title</title><style>b{}</style></head>"
+            "<body><div>Hello world, this is the actual sentence of the page.</div>"
+            "<script>var x=1</script></body></html>")
+    body = page
+    with mock.patch.object(ladder, "http", return_value=(200, body)):
+        status, title, text = ladder.jina("https://a.example/")
+    assert status.startswith("200"), status
+    assert title == "Real Title", title
+    assert "<div" not in text and "var x=1" not in text, text[:200]
+    assert "Hello world" in text
+
+
+def test_camofox_idle_browser_is_still_available():
+    """Lazy lifecycle: browserConnected:false can mean intentional idle, not down."""
+    idle = {"ok": True, "browserConnected": False, "browserRunning": False, "activeTabs": 0}
+    with mock.patch.object(ladder, "http", return_value=(200, idle)):
+        assert ladder.camofox_up() is True
+    with mock.patch.object(ladder, "http", return_value=(200, {"ok": True, "browserConnected": True})):
+        assert ladder.camofox_up() is True
+
+
+def test_camofox_genuine_error_is_unavailable():
+    """Only non-200 health or ok:false disables the rung."""
+    down = {"ok": False, "browserRunning": False, "reason": "missing_binary"}
+    with mock.patch.object(ladder, "http", return_value=(503, down)):
+        assert ladder.camofox_up() is False
+    with mock.patch.object(ladder, "http", return_value=(200, {"ok": False, "browserConnected": False})):
+        assert ladder.camofox_up() is False
+    with mock.patch.object(ladder, "http", return_value=(0, "URLError: connection refused")):
+        assert ladder.camofox_up() is False

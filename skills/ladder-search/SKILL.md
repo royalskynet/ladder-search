@@ -38,7 +38,7 @@ TinyFish is used only through the free Search/Fetch endpoints; the daily cap is 
 3. **camofox**: anti-detect Firefox REST service (`CAMOFOX_URL`, default `localhost:9377`). Handles bot walls. Has no login.
 4. **cdp**: background tab in the Chrome that `web-access` controls (`CDP_PROXY_URL`, default `localhost:3456`). Uses your login state. Waits up to 10 s for dynamic content, then closes the tab.
 
-A URL moves up only when the rung returns `BLOCKED` (401/403/429/503, body under 500 chars, or a captcha / login / cookie-wall marker), `EMPTY`, or `ERR`. Unreachable rungs are skipped. Browser rungs run serially with ≥3 s between hits on one domain.
+A URL moves up only when the rung returns `BLOCKED` (401/403/429/503, a captcha / login / cookie-wall marker, or a body under 500 chars that does not look like readable content), `EMPTY`, or `ERR`. Readable short content is valid JSON, or visible text with at least five alphanumeric word tokens or at least eight CJK characters. Unreachable rungs are skipped. Browser rungs run serially with ≥3 s between hits on one domain.
 
 ## Rules
 
