@@ -12,7 +12,9 @@ Read ladder (each rung tried at most once per URL, never the same rung twice):
     3. camofox  anti-detect Firefox REST (CAMOFOX_URL)        anti-bot, no login
     4. cdp      web-access cdp-proxy (CDP_PROXY_URL)          your logged-in Chrome
 A rung is skipped when its service is not reachable. Escalation happens only when the
-previous rung was blocked (401/403/429/503, body < 500 chars, or a captcha/login marker).
+previous rung was blocked (401/403/429/503, a captcha/login marker, or a sub-500-char body
+that is not valid JSON and whose visible text has fewer than five alphanumeric words and
+fewer than eight CJK characters).
 
 Output
     search: TITLE<TAB>URL                         (one hit per line)
@@ -29,6 +31,7 @@ Only the Python standard library is used.
 from __future__ import annotations
 
 import glob
+import html as htmllib
 import json
 import os
 import re
@@ -65,15 +68,91 @@ _JINA_HEADERS = ("Title:", "URL Source:", "Published Time:", "Warning:", "Markdo
 _READ_JS = "({title: document.title, body: document.body ? document.body.innerText : ''})"
 
 
+SHORT_BODY = 500  # below this, only text that does not look like readable content is a block
+_WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
+_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]")
+
+
+def _readable_short_text(text: str) -> bool:
+    """Whether a sub-500-character body still looks like document content.
+
+    Readable means exactly one of: valid JSON, at least five alphanumeric word
+    tokens in the visible text, or at least eight CJK characters. HTML is reduced
+    to visible text first, so markup and script bodies do not count as words.
+    """
+    visible = _html_to_text(text) if _looks_like_html(text) else text
+    visible = visible.strip()
+    if not visible:
+        return False
+    try:
+        json.loads(visible)
+    except ValueError:
+        pass
+    else:
+        return True
+    return len(_WORD_RE.findall(visible)) >= 5 or len(_CJK_RE.findall(visible)) >= 8
+
+
 def block_reason(status: int, body: str) -> str | None:
-    """Blocked page? Order is fixed: status code -> short body -> wall marker."""
+    """Blocked page? Order is fixed: status code -> wall marker -> unreadably short.
+
+    A short body alone is NOT a block. Under SHORT_BODY, valid JSON and visible
+    text with at least five alphanumeric word tokens or eight CJK characters are
+    content; anything smaller/less readable is still treated as a shell or stub.
+    """
     if status in BLOCKED_STATUSES:
         return "status"
-    if len(body) < 500:
-        return "short"
     if BLOCKED_MARKER_RE.search(body[:3000]):
         return "marker"
+    stripped = body.strip()
+    if len(stripped) < SHORT_BODY and not _readable_short_text(stripped):
+        return "short"
     return None
+
+
+def _looks_like_html(text: str) -> bool:
+    return bool(re.search(r"<\s*!?doctype|<\s*html|<\s*body", text[:2000], re.IGNORECASE))
+
+
+def _html_title(markup: str) -> str:
+    m = re.search(r"<title[^>]*>(.*?)</title>", markup, re.IGNORECASE | re.DOTALL)
+    return htmllib.unescape(m.group(1)).strip() if m else ""
+
+
+def _html_to_text(markup: str) -> str:
+    """Standard-library HTML -> readable text. Drops script/style, keeps block breaks."""
+    try:
+        from html.parser import HTMLParser
+
+        class _T(HTMLParser):
+            def __init__(self) -> None:
+                super().__init__(convert_charrefs=True)
+                self.chunks: list = []
+                self.skip = 0
+
+            def handle_starttag(self, tag, attrs):
+                if tag in ("head", "script", "style", "noscript", "template", "svg"):
+                    self.skip += 1
+                elif tag in ("p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "section", "article"):
+                    self.chunks.append("\n")
+
+            def handle_endtag(self, tag):
+                if tag in ("head", "script", "style", "noscript", "template", "svg") and self.skip:
+                    self.skip -= 1
+
+            def handle_data(self, data):
+                if not self.skip:
+                    self.chunks.append(data)
+
+        parser = _T()
+        parser.feed(markup)
+        parser.close()
+        text = "".join(parser.chunks)
+    except Exception:  # noqa: BLE001 - never fail a read because of parsing
+        text = re.sub(r"<[^>]+>", " ", markup)
+        text = htmllib.unescape(text)
+    text = re.sub(r"[ \t\r\f\v]+", " ", text)
+    return re.sub(r"\n\s*\n\s*\n+", "\n\n", text).strip()
 
 
 def _ssl_context() -> ssl.SSLContext | None:
@@ -106,6 +185,12 @@ def http(method: str, url: str, body: bytes | None = None, timeout: float = 60,
 # ---------- rung availability ----------
 
 def camofox_up() -> bool:
+    """Health endpoint says the service is usable.
+
+    Since camofox-browser v1.2.0 the browser is lazy: an intentionally idle service
+    can answer ok:true with browserConnected:false and still launch on the first tab
+    request. Genuine trouble is signalled by a non-200 health response or ok:false.
+    """
     sc, p = http("GET", CAMOFOX + "/health", timeout=3)
     return sc == 200 and isinstance(p, dict) and p.get("ok") is True
 
@@ -138,6 +223,9 @@ def jina(url: str) -> tuple[str, str, str]:
         return "BLOCKED:status", "", ""
     if sc != 200:
         return str(sc), "", ""
+    # Jina does not always honour the Markdown conversion: for some pages it returns
+    # the raw HTML under "Markdown Content:". Streaming tags into the model wastes the
+    # budget, so reduce to readable text and recover the title from <title>.
     text = text if isinstance(text, str) else json.dumps(text, ensure_ascii=False)
     title, lines = "", []
     for line in text.splitlines():
@@ -148,7 +236,12 @@ def jina(url: str) -> tuple[str, str, str]:
         if not lines and (not s or s.startswith(_JINA_HEADERS)):
             continue
         lines.append(line)
-    return _classify(" ".join(lines), title)
+    body = " ".join(lines)
+    if _looks_like_html(body):
+        if not title:
+            title = _html_title(body)
+        body = _html_to_text(body)
+    return _classify(body, title)
 
 
 def _tinyfish_json(args: list[str]) -> tuple[object, str]:

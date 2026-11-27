@@ -69,7 +69,7 @@ ladder.py read URL ... | @urls.txt      # URL<TAB>STATUS<TAB>RUNG<TAB>TITLE<TAB>
 ladder.py read URL --from cdp           # start at the logged-in Chrome rung
 ```
 
-Blocked means: HTTP 401/403/429/503, a body under 500 characters, or a captcha / login / cookie-wall marker in the first 3,000 characters.
+Blocked means: HTTP 401/403/429/503, a captcha / login / cookie-wall marker in the first 3,000 characters, or a body under 500 characters that does not look like readable content. Readable short content is valid JSON, or visible text with at least five alphanumeric word tokens or at least eight CJK characters.
 
 ## Builds on
 
